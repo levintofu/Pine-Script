@@ -1,0 +1,181 @@
+//@version=4
+
+strategy("Consolidation Zones + Bull Flag", overlay = true, max_bars_back = 1100)
+prd = input(defval = 10, title="Loopback Period", minval = 2, maxval = 50)
+conslen = input(defval = 5, title="Min Consolidation Length", minval = 2, maxval = 20)
+paintcons = input(defval = true, title = "Paint Consolidation Area ")
+zonecol = input(defval = color.new(color.blue, 70), title = "Zone Color")
+
+float hb_ = highestbars(prd) == 0 ? high : na
+float lb_ = lowestbars(prd) == 0 ? low : na
+var int dir = 0
+float zz = na
+float pp = na
+
+dir := iff(hb_ and na(lb_), 1, iff(lb_ and na(hb_), -1, dir))
+if hb_ and lb_
+    if dir == 1
+        zz := hb_
+    else
+        zz := lb_
+else
+    zz := iff(hb_, hb_, iff(lb_, lb_, na))
+
+for x = 0 to 1000
+    if na(close) or dir != dir[x]
+        break
+    if zz[x]
+        if na(pp)
+            pp := zz[x]
+        else
+            if dir[x] == 1 and zz[x] > pp
+                pp := zz[x]
+            if dir[x] == -1 and zz[x] < pp
+                pp := zz[x]
+
+var int conscnt = 0
+var float condhigh = na
+var float condlow = na
+float H_ = highest(conslen)
+float L_ = lowest(conslen)
+var line upline = na
+var line dnline = na
+bool breakoutup = false
+bool breakoutdown = false
+
+if change(pp)
+    if conscnt > conslen
+        if pp > condhigh
+            breakoutup := true
+        if pp < condlow
+            breakoutdown := true
+    if conscnt > 0 and pp <= condhigh and pp >= condlow
+        conscnt := conscnt + 1
+    else
+        conscnt := 0
+else
+    conscnt := conscnt + 1
+
+if conscnt >= conslen
+    if conscnt == conslen
+        condhigh := H_
+        condlow  := L_
+    else
+        line.delete(upline)
+        line.delete(dnline)
+        condhigh := max(condhigh, high)
+        condlow := min(condlow, low)
+    
+    upline := line.new(bar_index, condhigh, bar_index - conscnt, condhigh, color = color.red, style = line.style_dashed)
+    dnline := line.new(bar_index, condlow , bar_index - conscnt, condlow, color = color.lime, style = line.style_dashed)
+
+fill(plot(condhigh, color = na, style = plot.style_stepline),
+   plot(condlow, color = na, style = plot.style_stepline),
+   color = paintcons and conscnt > conslen ? zonecol : color.new(color.white, 100))
+
+alertcondition(breakoutup, title='Breakout Up', message='Breakout Up')
+alertcondition(breakoutdown, title='Breakout Down', message='Breakout Down')
+
+//Bull and Bear Falg Identification
+ATR = atr(10) //Average True Range over last 10 bars.
+
+upperATR = ohlc4[1] + ATR[1]  //Open + High + Low + Close divided by 4, + prior ATR. Just used here for visually plotting the ATR upper channel.
+lowerATR = ohlc4[1] - ATR[1] //Open + High + Low + Close divided by 4, - prior ATR. Just used here for visually plotting the ATR lower channel.
+
+//uncomment these two lines to see ATR channels
+//plot(upperATR, color=color.green)
+//plot(lowerATR, color=color.red)
+
+//Current close higher than previous close, and current close minus current open is greater than 3 times the previous ATR. "3x ATR" is chosen because any less was not a noticeable distance above the trading range.
+bullflagpole1 = close > close[1] and (close - open) > (ATR[1] * 3)
+
+
+//Two consecutive close higher than their previous close, and current close minus PREVIOUS open is greater than 3 times the previous ATR.
+bullflagpole2 = close > close[1] and close[1] > close[2] and (close - open[1]) > (ATR[1] * 3)
+
+
+//Three consecutive close higher than their previous close, and current close minus open from 2 bars ago is greater than 3 times the previous ATR.
+bullflagpole3 = close > close[1] and close[1] > close[2] and close[2] > close[3] and (close - open[2]) > (ATR[1] * 3)
+
+
+//A bull flagpole can be any of the three definitions of bull flagpole.
+bullflagpole = bullflagpole1 or bullflagpole2 or bullflagpole3
+
+//This will return the number of bars since "bullflagpole" was true. Not being used but could be useful.
+//since_bullflagpole = barssince(bullflagpole)
+
+after_pole_1 = bullflagpole[1] //This marks the bar directly after a bull flagpole.  
+//plotshape(after_pole_1,text="after_pole_1",style=shape.cross,size=size.large,color=color.white) //Plots a cross for after_pole_1 for QA testing
+after_pole_2 = bullflagpole[2] //This marks the bar two bars after a bull flagpole.  
+after_pole_3 = bullflagpole[3] //This marks the bar three bars after a bull flagpole.  
+
+//This returns the price at the "top" of the bull flagpole (using close price) at the most recent occurrence, 0.
+bull_pole_top = valuewhen(bullflagpole,close,0)
+//plot(bull_pole_top,trackprice=true) //plots a horizontal line at the most recent pole_top
+
+//Measures the distance between last pole top and the previous SMA.
+bull_pole_height = bull_pole_top - sma(close,10)[1]
+//plot(bull_pole_height)
+
+//This marks 50% below the pole_top which will be the lowest point a flag can be.
+bull_flag_bottom = bull_pole_top - (.50 * bull_pole_height)
+//plot(bull_flag_bottom)
+
+//The first second,and third bars after the pole are considered part of a flag when open and close are between the pole_top and flag_bottom
+bull_flag1 = after_pole_1 and (open >= bull_flag_bottom)and(open <= bull_pole_top)and(close >= bull_flag_bottom)and(close <= bull_pole_top)
+//plotshape(bull_flag1,text="bull_flag1",style=shape.flag,size=size.large,color=color.teal)
+bull_flag2 = after_pole_2 and (open >= bull_flag_bottom)and(open <= bull_pole_top)and(close >= bull_flag_bottom)and(close <= bull_pole_top)
+//plotshape(bull_flag2,text="bull_flag2",style=shape.flag,size=size.large,color=color.teal)
+bull_flag3 = after_pole_3 and (open >= bull_flag_bottom)and(open <= bull_pole_top)and(close >= bull_flag_bottom)and(close <= bull_pole_top)
+//plotshape(bull_flag3,text="bull_flag3",style=shape.flag,size=size.large,color=color.teal)
+
+//When all three bars after a flagpole are a flag, the criteria are met and we have a "bull_flag"
+//Specifically, when current bar is flag3, previous bar is flag2, and 2 bars ago is flag1, we have a bull_flag.
+bull_flag = bull_flag3 and bull_flag2[1] and bull_flag1[2]
+plotshape(bull_flag,text="bull_flag",style=shape.flag,size=size.large,color=color.teal)
+
+//Current close lower than previous close, and current open minus current close is greater than 3 times the previous ATR. "3x ATR" is chosen because any less was not a noticeable distance below the trading range.
+bearflagpole1 = close < close[1] and (open - close) > (ATR[1] * 3)
+
+//Two consecutive close lower than their previous close, and current open minus PREVIOUS close is greater than 3 times the previous ATR.
+bearflagpole2 = close < close[1] and close[1] < close[2] and (open - close[1]) > (ATR[1] * 3)
+
+
+//Three consecutive close lower than their previous close, and current open minus close from 2 bars ago is greater than 3 times the previous ATR.
+bearflagpole3 = close < close[1] and close[1] < close[2] and close[2] < close[3] and (open - close[2]) > (ATR[1] * 3)
+
+//A bear flagpole can be any of the three definitions of bear flagpole.
+bearflagpole = bearflagpole1 or bearflagpole2 or bearflagpole3
+
+//This will return the number of bars since "bearflagpole" was true. Not being used but could be useful.
+//since_bearflagpole = barssince(bearflagpole)
+
+after_bear_pole_1 = bearflagpole[1] //This marks the bar directly after a bear flagpole.  
+//plotshape(after_bear_pole_1,text="after_bear_pole_1",style=shape.cross,size=size.large,color=color.white) //Plots a cross for after_bear_pole_1 for QA testing
+after_bear_pole_2 = bearflagpole[2] //This marks the bar two bars after a bear flagpole.  
+after_bear_pole_3 = bearflagpole[3] //This marks the bar three bars after a bear flagpole.  
+
+//This returns the price at the "bottom" of the bear flagpole (using close price) at the most recent occurrence, 0.
+bear_pole_bottom = valuewhen(bearflagpole,close,0)
+
+
+//Measures the distance between last pole bottom and the previous SMA.
+bear_pole_height = sma(close,10)[1]-bear_pole_bottom
+//plot(bear_pole_height)
+
+//This marks 50% above the pole_bottom which will be the highest point a flag can be.
+bear_flag_top = bear_pole_bottom + (.50 * bear_pole_height)
+//plot(bear_flag_top)
+
+//The first, second, and third bars after the pole are considered part of a flag when open and close are between the pole_bottom and flag_top
+bear_flag1 = after_bear_pole_1 and (open <= bear_flag_top)and(open >= bear_pole_bottom)and(close <= bear_flag_top)and(close >= bear_pole_bottom)
+//plotshape(bear_flag1,text="bear_flag1",style=shape.flag,size=size.large,color=color.red)
+bear_flag2 = after_bear_pole_2 and (open <= bear_flag_top)and(open >= bear_pole_bottom)and(close <= bear_flag_top)and(close >= bear_pole_bottom)
+//plotshape(bear_flag2,text="bear_flag2",style=shape.flag,size=size.large,color=color.red)
+bear_flag3 = after_bear_pole_3 and (open <= bear_flag_top)and(open >= bear_pole_bottom)and(close <= bear_flag_top)and(close >= bear_pole_bottom)
+//plotshape(bear_flag3,text="bear_flag3",style=shape.flag,size=size.large,color=color.red)
+
+//When all three bars after a flagpole are a flag, the criteria are met and we have a "bear_flag"
+//Specifically, when current bar is flag3, previous bar is flag2, and 2 bars ago is flag1, we have a bear_flag.
+bear_flag = bear_flag3 and bear_flag2[1] and bear_flag1[2]
+plotshape(bear_flag,text="bear_flag",style=shape.flag,size=size.large,color=color.red)
